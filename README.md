@@ -80,4 +80,15 @@ See the source code for full details. Key methods:
 
 If you encounter any issues, please [open a issue](https://github.com/ImInTheICU/alos-gg-solver/issues) or email me at **[christopher@ropanel.com](mailto:christopher@ropanel.com)**.
 
+## Showcase
+<div align="center">
+  <video
+    src="https://github.com/user-attachments/assets/d37634fd-c968-4e1b-a4d1-76854183579f"
+    controls
+    width="600"
+  >
+    Your browser does not support the video tag.
+  </video>
+</div>
+
 ---
