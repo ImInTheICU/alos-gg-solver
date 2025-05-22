@@ -7,13 +7,14 @@ attaching captcha flags to responses and using a dynamic UA generator.
 If you have any problems please email me or open a Github issue. Thanks!
 """
 __author__ = "Chris <christopher@ropanel.com>"
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 __github__ = "https://github.com/ImInTheICU/alos-gg-solver"
 
 import re
 import random
 import hashlib
 import requests
+import urllib.parse
 
 from collections import defaultdict
 from typing import Optional, Dict, Tuple, Any
@@ -23,7 +24,7 @@ class AlosResponse(requests.Response):
     captcha_solved: bool
 
 class Alos:
-    VERIFY_PATH = "/alosgg/verify"
+    VERIFY_PATH: str = "/alosgg/verify"
 
     _OS_TOKENS: Dict[str, list[str]] = {
         "Windows": ["Windows NT 10.0", "Windows NT 6.3", "Windows NT 6.1"],
@@ -145,16 +146,24 @@ class Alos:
         proxies: Optional[Dict[str, str]],
         headers: Dict[str, str]
     ) -> Tuple[bool, bool]:
+        m_unesc = re.search(
+            r'unescape\(\s*([\'"])(?P<enc>.+?)\1\s*\)',
+            html
+        )
+        if m_unesc: # NOTE: Remove after patch, current unescape bypass.
+            html_to_search = urllib.parse.unquote(m_unesc.group('enc'))
+        else:
+            html_to_search = html
         domain = re.match(r'^(https?://[^/]+)', url).group(1)
-        name1, name2 = self._discover_vars(html)
+        name1, name2 = self._discover_vars(html_to_search)
         if not (name1 and name2):
             return False, False
         if not self._cached_names:
             self._cached_names = (name1, name2)
         else:
             name1, name2 = self._cached_names
-        m1 = re.search(rf'{name1}\s*=\s*"([^"\n]+)"', html)
-        m2 = re.search(rf'{name2}\s*=\s*"([^"\n]+)"', html)
+        m1 = re.search(rf'{name1}\s*=\s*"([^"\n]+)"', html_to_search)
+        m2 = re.search(rf'{name2}\s*=\s*"([^"\n]+)"', html_to_search)
         if not (m1 and m2):
             return True, False
         r1, r2 = self._solve_proof(m1.group(1)), self._solve_proof(m2.group(1))
@@ -188,14 +197,12 @@ class Alos:
         """
         headers: Dict[str, str] = kwargs.pop('headers', {})
         domain = re.match(r'^(https?://[^/]+)', url).group(1)
-
         headers.setdefault('User-Agent', self._gen_user_agent())
         headers.setdefault('Referer', domain)
         kwargs['headers'] = headers
         kwargs.setdefault('timeout', self.timeout)
         if proxies:
             kwargs['proxies'] = proxies
-
         raw: requests.Response = self.session.request(method, url, **kwargs)
         response = AlosResponse()
         response.__dict__.update(raw.__dict__)
