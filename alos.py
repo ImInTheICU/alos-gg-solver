@@ -1,15 +1,3 @@
-"""
-Alos PoW solver
-
-Wraps requests.Session to auto solve PoW challenges for alos.gg,
-attaching captcha flags to responses and using a dynamic UA generator.
-
-If you have any problems please email me or open a Github issue. Thanks!
-"""
-__author__ = "Chris <christopher@ropanel.com>"
-__version__ = "0.0.2"
-__github__ = "https://github.com/ImInTheICU/alos-gg-solver"
-
 import re
 import random
 import hashlib
@@ -65,7 +53,7 @@ class Alos:
         Initialize Alos solver.
 
         Args:
-            difficulty: Number of leading zeros required by PoW. Shouldn't need to be change has been configured to solve correctly.
+            difficulty: Number of leading zeros required by PoW.
             timeout: Request timeout in seconds.
         """
         self.session = requests.Session()
@@ -119,6 +107,33 @@ class Alos:
         ma, mi, bu = random.randint(12, 14), random.randint(0, 5), random.randint(0, 1000)
         return f"Mozilla/5.0 ({android_token}) AppleWebKit/537.36 (KHTML, like Gecko) UCBrowser/{ma}.{mi}.{bu} Mobile Safari/537.36"
 
+    def _find_unescape_aliases(self, html: str) -> set[str]:
+        aliases = {m.group(1) for m in re.finditer(r'\bvar\s+(\w+)\s*=\s*unescape\b', html)}
+        chain_pat = r'\bvar\s+(\w+)\s*=\s*(%s)\s*;'
+        changed = True
+        while changed and aliases:
+            changed = False
+            pat = chain_pat % '|'.join(map(re.escape, aliases))
+            for m in re.finditer(pat, html):
+                alias = m.group(1)
+                if alias not in aliases:
+                    aliases.add(alias)
+                    changed = True
+        return aliases
+
+    def _extract_escaped(self, html: str) -> Optional[str]:
+        aliases = self._find_unescape_aliases(html)
+        if not aliases:
+            return None
+        name_pattern = '|'.join(map(re.escape, aliases))
+        call_re = re.compile(
+            rf'\b(?P<fn>{name_pattern})\s*\(\s*(["\'])(?P<enc>.+?)\2\s*\)'
+        )
+        m = call_re.search(html)
+        if not m:
+            return None
+        return urllib.parse.unquote(m.group('enc'))
+
     def _discover_vars(self, html: str) -> Tuple[Optional[str], Optional[str]]:
         pairs = re.findall(r'const\s+(\w+)\s*=\s*"([^"\n]+)"', html)
         candidates = [(n, v) for n, v in pairs if len(v) >= 20 and re.fullmatch(r'[A-Za-z0-9+/=]+', v)]
@@ -146,14 +161,8 @@ class Alos:
         proxies: Optional[Dict[str, str]],
         headers: Dict[str, str]
     ) -> Tuple[bool, bool]:
-        m_unesc = re.search(
-            r'unescape\(\s*([\'"])(?P<enc>.+?)\1\s*\)',
-            html
-        )
-        if m_unesc: # NOTE: Remove after patch, current unescape bypass.
-            html_to_search = urllib.parse.unquote(m_unesc.group('enc'))
-        else:
-            html_to_search = html
+        extracted = self._extract_escaped(html)
+        html_to_search = extracted if extracted is not None else html
         domain = re.match(r'^(https?://[^/]+)', url).group(1)
         name1, name2 = self._discover_vars(html_to_search)
         if not (name1 and name2):
@@ -183,18 +192,6 @@ class Alos:
         proxies: Optional[Dict[str, str]] = None,
         **kwargs: Any
     ) -> AlosResponse:
-        """
-        Send a HTTP request, auto solving PoW if detected.
-
-        Args:
-            method: HTTP method (e.g. 'GET', 'POST').
-            url: Target URL.
-            proxies: Optional proxy dict.
-            **kwargs: Passed to `requests.Session.request`.
-
-        Returns:
-            An AlosResponse with `.captcha_present` and `.captcha_solved`.
-        """
         headers: Dict[str, str] = kwargs.pop('headers', {})
         domain = re.match(r'^(https?://[^/]+)', url).group(1)
         headers.setdefault('User-Agent', self._gen_user_agent())
@@ -215,31 +212,24 @@ class Alos:
             response.captcha_present = True
             response.captcha_solved = True
         return response
-    
+
     def get(self, url, **kwargs) -> AlosResponse:
-        """Alias for `request('GET', ...)`."""
         return self.request('GET', url, **kwargs)
 
     def post(self, url, **kwargs) -> AlosResponse:
-        """Alias for `request('POST', ...)`."""
         return self.request('POST', url, **kwargs)
 
     def head(self, url, **kwargs) -> AlosResponse:
-        """Alias for `request('HEAD', ...)`."""
         return self.request('HEAD', url, **kwargs)
 
     def put(self, url, **kwargs) -> AlosResponse:
-        """Alias for `request('PUT', ...)`."""
         return self.request('PUT', url, **kwargs)
 
     def delete(self, url, **kwargs) -> AlosResponse:
-        """Alias for `request('DELETE', ...)`."""
         return self.request('DELETE', url, **kwargs)
 
     def patch(self, url, **kwargs) -> AlosResponse:
-        """Alias for `request('PATCH', ...)`."""
         return self.request('PATCH', url, **kwargs)
 
     def options(self, url, **kwargs) -> AlosResponse:
-        """Alias for `request('OPTIONS', ...)`."""
         return self.request('OPTIONS', url, **kwargs)
