@@ -236,7 +236,6 @@ class Alos:
                     print("\n")
             except requests.RequestException:
                 pass
-
         headers: Dict[str, str] = kwargs.pop('headers', {})
         domain = re.match(r'^(https?://[^/]+)', url).group(1)
         headers.setdefault('User-Agent', self._gen_user_agent())
@@ -245,40 +244,43 @@ class Alos:
         kwargs.setdefault('timeout', self.timeout)
         if proxies:
             kwargs['proxies'] = proxies
-
         raw: requests.Response = self.session.request(method, url, **kwargs)
         response = AlosResponse()
         response.__dict__.update(raw.__dict__)
-
         present, solved = self._solve_challenge(response.text, url, proxies, headers)
         response.captcha_present = present
         response.captcha_solved = solved
-
         if solved:
             retry = self.session.request(method, url, **kwargs)
             response.__dict__.update(retry.__dict__)
             response.captcha_present = True
             response.captcha_solved = True
-
         return response
 
     def get(self, url, **kwargs) -> AlosResponse:
+        """Alias for `request('GET', ...)`."""
         return self.request('GET', url, **kwargs)
 
     def post(self, url, **kwargs) -> AlosResponse:
+        """Alias for `request('POST', ...)`."""
         return self.request('POST', url, **kwargs)
 
     def head(self, url, **kwargs) -> AlosResponse:
+        """Alias for `request('HEAD', ...)`."""
         return self.request('HEAD', url, **kwargs)
 
     def put(self, url, **kwargs) -> AlosResponse:
+        """Alias for `request('PUT', ...)`."""
         return self.request('PUT', url, **kwargs)
 
     def delete(self, url, **kwargs) -> AlosResponse:
+        """Alias for `request('DELETE', ...)`."""
         return self.request('DELETE', url, **kwargs)
 
     def patch(self, url, **kwargs) -> AlosResponse:
+        """Alias for `request('PATCH', ...)`."""
         return self.request('PATCH', url, **kwargs)
 
     def options(self, url, **kwargs) -> AlosResponse:
+        """Alias for `request('OPTIONS', ...)`."""
         return self.request('OPTIONS', url, **kwargs)
