@@ -284,3 +284,4 @@ class Alos:
     def options(self, url, **kwargs) -> AlosResponse:
         """Alias for `request('OPTIONS', ...)`."""
         return self.request('OPTIONS', url, **kwargs)
+
