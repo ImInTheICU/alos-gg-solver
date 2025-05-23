@@ -7,7 +7,7 @@ attaching captcha flags to responses and using a dynamic UA generator.
 If you have any problems please email me or open a Github issue. Thanks!
 """
 __author__ = "Chris <christopher@ropanel.com>"
-__version__ = "0.0.7"
+__version__ = "0.0.8"
 __github__ = "https://github.com/ImInTheICU/alos-gg-solver"
 
 import warnings
@@ -123,22 +123,22 @@ class Alos:
         ma, mi, bu = random.randint(12, 14), random.randint(0, 5), random.randint(0, 1000)
         return f"Mozilla/5.0 ({android_token}) AppleWebKit/537.36 (KHTML, like Gecko) UCBrowser/{ma}.{mi}.{bu} Mobile Safari/537.36"
 
-    def _extract_base64(self, html: str, min_len: int = 40) -> str:
-        pattern = re.compile(r'["\'](?P<b64>[A-Za-z0-9+/=]{' + str(min_len) + r',})["\']')
-        matches = pattern.finditer(html)
-        longest = ""
-        for m in matches:
-            s = m.group("b64")
-            if len(s) > len(longest):
-                longest = s
-        if not longest:
-            return html
-        try:
-            decoded = base64.b64decode(longest).decode("utf8", "ignore")
-            return decoded
-        except Exception:
-            return html
-
+    def _extract_payload_with_challenge(self, html: str) -> str:
+        base64_pattern = re.compile(r'["\']([A-Za-z0-9+/=]{40,})["\']')
+        matches = base64_pattern.findall(html)
+        for blob in matches:
+            try:
+                decoded = base64.b64decode(blob).decode("utf-8", errors="ignore")
+                found_vars = re.findall(
+                    r'\b(?:const|let|var)?\s*(\w{1,10})\s*=\s*"([A-Za-z0-9+/=]{20,})"',
+                    decoded
+                )
+                if len(found_vars) >= 2:
+                    return decoded
+            except Exception:
+                continue
+        return html
+    
     def _discover_vars(self, html: str) -> Tuple[Optional[str], Optional[str]]:
         pairs = re.findall(r'const\s+(\w+)\s*=\s*"([^"\n]+)"', html)
         candidates = [
@@ -169,25 +169,20 @@ class Alos:
         proxies: Optional[Dict[str, str]],
         headers: Dict[str, str]
     ) -> Tuple[bool, bool]:
-        html = self._extract_base64(raw_html)
-
+        html = self._extract_payload_with_challenge(raw_html)
         name1, name2 = self._discover_vars(html)
         if not (name1 and name2):
             return False, False
-
         if not self._cached_names:
             self._cached_names = (name1, name2)
         else:
             name1, name2 = self._cached_names
-
         m1 = re.search(rf'{name1}\s*=\s*"([^"\n]+)"', html)
         m2 = re.search(rf'{name2}\s*=\s*"([^"\n]+)"', html)
         if not (m1 and m2):
             return True, False
-
         r1 = self._solve_proof(m1.group(1))
         r2 = self._solve_proof(m2.group(1))
-
         domain = re.match(r'^(https?://[^/]+)', url).group(1)
         verify_headers = headers.copy()
         verify_headers['Origin'] = domain
