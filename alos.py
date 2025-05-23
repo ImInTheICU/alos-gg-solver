@@ -7,7 +7,7 @@ attaching captcha flags to responses and using a dynamic UA generator.
 If you have any problems please email me or open a Github issue. Thanks!
 """
 __author__ = "Chris <christopher@ropanel.com>"
-__version__ = "0.0.6"
+__version__ = "0.0.7"
 __github__ = "https://github.com/ImInTheICU/alos-gg-solver"
 
 import warnings
@@ -15,10 +15,10 @@ import re
 import random
 import hashlib
 import requests
-import urllib.parse
+import base64
 
 from collections import defaultdict
-from typing import Optional, Dict, Tuple, Any, Set
+from typing import Optional, Dict, Tuple, Any
 
 class AlosResponse(requests.Response):
     captcha_present: bool
@@ -26,12 +26,6 @@ class AlosResponse(requests.Response):
 
 class Alos:
     VERIFY_PATH: str = "/alosgg/verify"
-
-    _ASSIGN_RE = re.compile(
-        r'(?:\b(?:var|let|const)\s+)?' 
-        r'(?P<lhs>\w+)\s*=\s*'           
-        r'(?P<rhs>\w+)\s*;'             
-    )
 
     _OS_TOKENS: Dict[str, list[str]] = {
         "Windows": ["Windows NT 10.0", "Windows NT 6.3", "Windows NT 6.1"],
@@ -129,35 +123,21 @@ class Alos:
         ma, mi, bu = random.randint(12, 14), random.randint(0, 5), random.randint(0, 1000)
         return f"Mozilla/5.0 ({android_token}) AppleWebKit/537.36 (KHTML, like Gecko) UCBrowser/{ma}.{mi}.{bu} Mobile Safari/537.36"
 
-    def _find_unescape_aliases(self, html: str) -> Set[str]:
-        aliases: Set[str] = set()
-        for m in re.finditer(r'\b(?:var|let|const)\s+(\w+)\s*=\s*unescape\b', html):
-            aliases.add(m.group(1))
-        changed = True
-        while changed:
-            changed = False
-            for m in self._ASSIGN_RE.finditer(html):
-                lhs, rhs = m.group('lhs'), m.group('rhs')
-                if rhs in aliases and lhs not in aliases:
-                    aliases.add(lhs)
-                    changed = True
-        return aliases
-
-    def _decode_percent_runs(self, html: str, min_len: int = 20) -> str:        
-        def _repl(m: re.Match) -> str:
-            return urllib.parse.unquote(m.group(0))
-        pattern = re.compile(rf'(?:%[0-9A-Fa-f]{{2}}){{{min_len},}}')
-        return pattern.sub(_repl, html)
-
-    def _extract_escaped(self, html: str) -> str:
-        aliases = self._find_unescape_aliases(html)
-        if aliases:
-            fn_group = '|'.join(map(re.escape, aliases))
-            call_re = re.compile(rf'\b(?:{fn_group})\s*\(\s*([\'"])(?P<enc>.+?)\1\s*\)')
-            m = call_re.search(html)
-            if m:
-                return urllib.parse.unquote(m.group('enc'))
-        return self._decode_percent_runs(html, min_len=20)
+    def _extract_base64(self, html: str, min_len: int = 40) -> str:
+        pattern = re.compile(r'["\'](?P<b64>[A-Za-z0-9+/=]{' + str(min_len) + r',})["\']')
+        matches = pattern.finditer(html)
+        longest = ""
+        for m in matches:
+            s = m.group("b64")
+            if len(s) > len(longest):
+                longest = s
+        if not longest:
+            return html
+        try:
+            decoded = base64.b64decode(longest).decode("utf8", "ignore")
+            return decoded
+        except Exception:
+            return html
 
     def _discover_vars(self, html: str) -> Tuple[Optional[str], Optional[str]]:
         pairs = re.findall(r'const\s+(\w+)\s*=\s*"([^"\n]+)"', html)
@@ -184,26 +164,31 @@ class Alos:
 
     def _solve_challenge(
         self,
-        html: str,
+        raw_html: str,
         url: str,
         proxies: Optional[Dict[str, str]],
         headers: Dict[str, str]
     ) -> Tuple[bool, bool]:
-        html_to_search = self._extract_escaped(html)
-        domain = re.match(r'^(https?://[^/]+)', url).group(1)
-        name1, name2 = self._discover_vars(html_to_search)
+        html = self._extract_base64(raw_html)
+
+        name1, name2 = self._discover_vars(html)
         if not (name1 and name2):
             return False, False
+
         if not self._cached_names:
             self._cached_names = (name1, name2)
         else:
             name1, name2 = self._cached_names
-        m1 = re.search(rf'{name1}\s*=\s*"([^"\n]+)"', html_to_search)
-        m2 = re.search(rf'{name2}\s*=\s*"([^"\n]+)"', html_to_search)
+
+        m1 = re.search(rf'{name1}\s*=\s*"([^"\n]+)"', html)
+        m2 = re.search(rf'{name2}\s*=\s*"([^"\n]+)"', html)
         if not (m1 and m2):
             return True, False
+
         r1 = self._solve_proof(m1.group(1))
         r2 = self._solve_proof(m2.group(1))
+
+        domain = re.match(r'^(https?://[^/]+)', url).group(1)
         verify_headers = headers.copy()
         verify_headers['Origin'] = domain
         verify_url = f"{domain}{self.VERIFY_PATH}?r1={r1}&r2={r2}"
@@ -301,3 +286,4 @@ class Alos:
     def options(self, url, **kwargs) -> AlosResponse:
         """Alias for `request('OPTIONS', ...)`."""
         return self.request('OPTIONS', url, **kwargs)
+    
