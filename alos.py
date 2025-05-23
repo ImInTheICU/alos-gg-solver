@@ -1,3 +1,16 @@
+"""
+Alos PoW solver
+
+Wraps requests.Session to auto solve PoW challenges for alos.gg,
+attaching captcha flags to responses and using a dynamic UA generator.
+
+If you have any problems please email me or open a Github issue. Thanks!
+"""
+__author__ = "Chris <christopher@ropanel.com>"
+__version__ = "0.0.4"
+__github__ = "https://github.com/ImInTheICU/alos-gg-solver"
+
+import warnings
 import re
 import random
 import hashlib
@@ -33,6 +46,7 @@ class Alos:
             "iPad; CPU OS 14_7 like Mac OS X",
         ],
     }
+
     _BROWSERS: Dict[str, float] = {
         "chrome": 50,
         "edge":   15,
@@ -47,7 +61,8 @@ class Alos:
     def __init__(
         self,
         difficulty: int = 4,
-        timeout: float = 4.0
+        timeout: float = 4.0,
+        version_check: bool = True
     ):
         """
         Initialize Alos solver.
@@ -60,6 +75,7 @@ class Alos:
         self.difficulty: int = difficulty
         self.prefix: str = "0" * difficulty
         self.timeout: float = timeout
+        self.version_check = version_check
         self._cached_names: Optional[Tuple[str, str]] = None
 
     def _gen_user_agent(self) -> str:
@@ -192,6 +208,35 @@ class Alos:
         proxies: Optional[Dict[str, str]] = None,
         **kwargs: Any
     ) -> AlosResponse:
+        """
+        Send a HTTP request, auto solving PoW if detected, with optional version check.
+
+        Args:
+            method: HTTP method (e.g. 'GET', 'POST').
+            url: Target URL.
+            proxies: Optional proxy dict.
+            **kwargs: Passed to `requests.Session.request`.
+
+        Returns:
+            An AlosResponse with `.captcha_present` and `.captcha_solved`.
+        """
+        if self.version_check:
+            try:
+                ver_url = f"{__github__}/raw/refs/heads/main/version.bin"
+                ver_resp = self.session.get(ver_url, timeout=self.timeout)
+                remote_version = ver_resp.text.strip()
+                if remote_version and remote_version != __version__:
+                    warnings.warn(
+                        f"alos-gg-solver v{__version__} is outdated; "
+                        f"latest is v{remote_version}. "
+                        f"Please update at {__github__}",
+                        category=UserWarning,
+                        stacklevel=2
+                    )
+                    print("\n")
+            except requests.RequestException:
+                pass
+
         headers: Dict[str, str] = kwargs.pop('headers', {})
         domain = re.match(r'^(https?://[^/]+)', url).group(1)
         headers.setdefault('User-Agent', self._gen_user_agent())
@@ -200,17 +245,21 @@ class Alos:
         kwargs.setdefault('timeout', self.timeout)
         if proxies:
             kwargs['proxies'] = proxies
+
         raw: requests.Response = self.session.request(method, url, **kwargs)
         response = AlosResponse()
         response.__dict__.update(raw.__dict__)
+
         present, solved = self._solve_challenge(response.text, url, proxies, headers)
         response.captcha_present = present
         response.captcha_solved = solved
+
         if solved:
             retry = self.session.request(method, url, **kwargs)
             response.__dict__.update(retry.__dict__)
             response.captcha_present = True
             response.captcha_solved = True
+
         return response
 
     def get(self, url, **kwargs) -> AlosResponse:
