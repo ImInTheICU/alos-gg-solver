@@ -7,7 +7,7 @@ attaching captcha flags to responses and using a dynamic UA generator.
 If you have any problems please email me or open a Github issue. Thanks!
 """
 __author__ = "Chris <christopher@ropanel.com>"
-__version__ = "0.0.4"
+__version__ = "0.0.5"
 __github__ = "https://github.com/ImInTheICU/alos-gg-solver"
 
 import warnings
@@ -18,7 +18,7 @@ import requests
 import urllib.parse
 
 from collections import defaultdict
-from typing import Optional, Dict, Tuple, Any
+from typing import Optional, Dict, Tuple, Any, Set
 
 class AlosResponse(requests.Response):
     captcha_present: bool
@@ -26,6 +26,12 @@ class AlosResponse(requests.Response):
 
 class Alos:
     VERIFY_PATH: str = "/alosgg/verify"
+
+    _ASSIGN_RE = re.compile(
+        r'(?:\b(?:var|let|const)\s+)?' 
+        r'(?P<lhs>\w+)\s*=\s*'           
+        r'(?P<rhs>\w+)\s*;'             
+    )
 
     _OS_TOKENS: Dict[str, list[str]] = {
         "Windows": ["Windows NT 10.0", "Windows NT 6.3", "Windows NT 6.1"],
@@ -123,31 +129,37 @@ class Alos:
         ma, mi, bu = random.randint(12, 14), random.randint(0, 5), random.randint(0, 1000)
         return f"Mozilla/5.0 ({android_token}) AppleWebKit/537.36 (KHTML, like Gecko) UCBrowser/{ma}.{mi}.{bu} Mobile Safari/537.36"
 
-    def _find_unescape_aliases(self, html: str) -> set[str]:
-        aliases = {m.group(1) for m in re.finditer(r'\bvar\s+(\w+)\s*=\s*unescape\b', html)}
-        chain_pat = r'\bvar\s+(\w+)\s*=\s*(%s)\s*;'
+
+    def _find_unescape_aliases(self, html: str) -> Set[str]:
+        aliases: Set[str] = set()
+
+        for m in re.finditer(r'\b(?:var|let|const)\s+(\w+)\s*=\s*unescape\b', html):
+            aliases.add(m.group(1))
+
         changed = True
-        while changed and aliases:
+        while changed:
             changed = False
-            pat = chain_pat % '|'.join(map(re.escape, aliases))
-            for m in re.finditer(pat, html):
-                alias = m.group(1)
-                if alias not in aliases:
-                    aliases.add(alias)
+            for m in self._ASSIGN_RE.finditer(html):
+                lhs, rhs = m.group('lhs'), m.group('rhs')
+                if rhs in aliases and lhs not in aliases:
+                    aliases.add(lhs)
                     changed = True
+
         return aliases
 
-    def _extract_escaped(self, html: str) -> Optional[str]:
+    def _extract_escaped(self, html: str) -> str:
         aliases = self._find_unescape_aliases(html)
         if not aliases:
-            return None
-        name_pattern = '|'.join(map(re.escape, aliases))
+            return html
+
+        fn_group = '|'.join(map(re.escape, aliases))
         call_re = re.compile(
-            rf'\b(?P<fn>{name_pattern})\s*\(\s*(["\'])(?P<enc>.+?)\2\s*\)'
+            rf'\b(?:{fn_group})\s*\(\s*([\'"])(?P<enc>.+?)\1\s*\)'
         )
         m = call_re.search(html)
         if not m:
-            return None
+            return html
+
         return urllib.parse.unquote(m.group('enc'))
 
     def _discover_vars(self, html: str) -> Tuple[Optional[str], Optional[str]]:
@@ -284,4 +296,3 @@ class Alos:
     def options(self, url, **kwargs) -> AlosResponse:
         """Alias for `request('OPTIONS', ...)`."""
         return self.request('OPTIONS', url, **kwargs)
-
