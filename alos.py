@@ -7,7 +7,7 @@ attaching captcha flags to responses and using a dynamic UA generator.
 If you have any problems please email me or open a Github issue. Thanks!
 """
 __author__ = "Chris <christopher@ropanel.com>"
-__version__ = "0.0.5"
+__version__ = "0.0.6"
 __github__ = "https://github.com/ImInTheICU/alos-gg-solver"
 
 import warnings
@@ -129,13 +129,10 @@ class Alos:
         ma, mi, bu = random.randint(12, 14), random.randint(0, 5), random.randint(0, 1000)
         return f"Mozilla/5.0 ({android_token}) AppleWebKit/537.36 (KHTML, like Gecko) UCBrowser/{ma}.{mi}.{bu} Mobile Safari/537.36"
 
-
     def _find_unescape_aliases(self, html: str) -> Set[str]:
         aliases: Set[str] = set()
-
         for m in re.finditer(r'\b(?:var|let|const)\s+(\w+)\s*=\s*unescape\b', html):
             aliases.add(m.group(1))
-
         changed = True
         while changed:
             changed = False
@@ -144,27 +141,30 @@ class Alos:
                 if rhs in aliases and lhs not in aliases:
                     aliases.add(lhs)
                     changed = True
-
         return aliases
+
+    def _decode_percent_runs(self, html: str, min_len: int = 20) -> str:        
+        def _repl(m: re.Match) -> str:
+            return urllib.parse.unquote(m.group(0))
+        pattern = re.compile(rf'(?:%[0-9A-Fa-f]{{2}}){{{min_len},}}')
+        return pattern.sub(_repl, html)
 
     def _extract_escaped(self, html: str) -> str:
         aliases = self._find_unescape_aliases(html)
-        if not aliases:
-            return html
-
-        fn_group = '|'.join(map(re.escape, aliases))
-        call_re = re.compile(
-            rf'\b(?:{fn_group})\s*\(\s*([\'"])(?P<enc>.+?)\1\s*\)'
-        )
-        m = call_re.search(html)
-        if not m:
-            return html
-
-        return urllib.parse.unquote(m.group('enc'))
+        if aliases:
+            fn_group = '|'.join(map(re.escape, aliases))
+            call_re = re.compile(rf'\b(?:{fn_group})\s*\(\s*([\'"])(?P<enc>.+?)\1\s*\)')
+            m = call_re.search(html)
+            if m:
+                return urllib.parse.unquote(m.group('enc'))
+        return self._decode_percent_runs(html, min_len=20)
 
     def _discover_vars(self, html: str) -> Tuple[Optional[str], Optional[str]]:
         pairs = re.findall(r'const\s+(\w+)\s*=\s*"([^"\n]+)"', html)
-        candidates = [(n, v) for n, v in pairs if len(v) >= 20 and re.fullmatch(r'[A-Za-z0-9+/=]+', v)]
+        candidates = [
+            (n, v) for n, v in pairs
+            if len(v) >= 20 and re.fullmatch(r'[A-Za-z0-9+/=]+', v)
+        ]
         groups: Dict[int, list[str]] = defaultdict(list)
         for name, val in candidates:
             groups[len(val)].append(name)
@@ -189,8 +189,7 @@ class Alos:
         proxies: Optional[Dict[str, str]],
         headers: Dict[str, str]
     ) -> Tuple[bool, bool]:
-        extracted = self._extract_escaped(html)
-        html_to_search = extracted if extracted is not None else html
+        html_to_search = self._extract_escaped(html)
         domain = re.match(r'^(https?://[^/]+)', url).group(1)
         name1, name2 = self._discover_vars(html_to_search)
         if not (name1 and name2):
@@ -203,12 +202,18 @@ class Alos:
         m2 = re.search(rf'{name2}\s*=\s*"([^"\n]+)"', html_to_search)
         if not (m1 and m2):
             return True, False
-        r1, r2 = self._solve_proof(m1.group(1)), self._solve_proof(m2.group(1))
+        r1 = self._solve_proof(m1.group(1))
+        r2 = self._solve_proof(m2.group(1))
         verify_headers = headers.copy()
         verify_headers['Origin'] = domain
         verify_url = f"{domain}{self.VERIFY_PATH}?r1={r1}&r2={r2}"
         try:
-            resp = self.session.get(verify_url, headers=verify_headers, proxies=proxies, timeout=self.timeout)
+            resp = self.session.get(
+                verify_url,
+                headers=verify_headers,
+                proxies=proxies,
+                timeout=self.timeout
+            )
             return True, resp.status_code == 200
         except requests.RequestException:
             return True, False
