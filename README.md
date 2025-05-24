@@ -78,7 +78,7 @@ See the source code for full details. Key methods:
 
 ## Reporting Issues
 
-If you encounter any issues, please [open a issue](https://github.com/ImInTheICU/alos-gg-solver/issues) or email me at **[christopher@ropanel.com](mailto:christopher@ropanel.com)**.
+If you encounter any issues, please [open a issue](https://github.com/ImInTheICU/alos-gg-solver/issues) or email me at **[contact@aris.wtf](mailto:contact@aris.wtf)**.
 
 ## Showcase
 <div align="center">
