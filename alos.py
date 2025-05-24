@@ -7,7 +7,7 @@ attaching captcha flags to responses and using a dynamic UA generator.
 If you have any problems please email me or open a Github issue. Thanks!
 """
 __author__ = "Chris <christopher@ropanel.com>"
-__version__ = "0.0.8"
+__version__ = "0.0.9"
 __github__ = "https://github.com/ImInTheICU/alos-gg-solver"
 
 import warnings
@@ -123,22 +123,52 @@ class Alos:
         ma, mi, bu = random.randint(12, 14), random.randint(0, 5), random.randint(0, 1000)
         return f"Mozilla/5.0 ({android_token}) AppleWebKit/537.36 (KHTML, like Gecko) UCBrowser/{ma}.{mi}.{bu} Mobile Safari/537.36"
 
+    # NOTE: Xertz please stop patching my challenge bypasses, i can't keep making new regexs...
     def _extract_payload_with_challenge(self, html: str) -> str:
-        base64_pattern = re.compile(r'["\']([A-Za-z0-9+/=]{40,})["\']')
-        matches = base64_pattern.findall(html)
-        for blob in matches:
+        m_alias = re.search(r'var\s+(\w+)\s*=\s*window', html)
+        alias = m_alias.group(1) if m_alias else 'window'
+        invoke_re = re.compile(
+            rf'{re.escape(alias)}\s*'
+            r'\[\s*\w+\s*\]\s*'
+            r'\[\s*\w+\s*\]\s*'
+            r'\(\s*[\'"](?P<blob>[A-Za-z0-9+/=]{30,})[\'"]'
+        )
+        blobs = [m.group('blob') for m in invoke_re.finditer(html)]
+        if not blobs:
+            blobs = re.findall(r'[\'"]([A-Za-z0-9+/=]{40,})[\'"]', html)
+        freq: Dict[str,int] = {}
+        for b in blobs:
+            freq[b] = freq.get(b, 0) + 1
+        min_count = min(freq.values(), default=0)
+        candidates = [b for b, c in freq.items() if c == min_count]
+        if len(candidates) == 1:
             try:
-                decoded = base64.b64decode(blob).decode("utf-8", errors="ignore")
-                found_vars = re.findall(
-                    r'\b(?:const|let|var)?\s*(\w{1,10})\s*=\s*"([A-Za-z0-9+/=]{20,})"',
-                    decoded
-                )
-                if len(found_vars) >= 2:
-                    return decoded
+                return base64.b64decode(candidates[0]).decode('utf-8', errors='ignore')
             except Exception:
-                continue
+                pass
+        def score_blob(blob_b64: str) -> Tuple[int,int,str]:
+            try:
+                txt = base64.b64decode(blob_b64).decode('utf-8', errors='ignore')
+            except Exception:
+                return ( -1, -1, "" )
+            vars_found = re.findall(
+                r'\b(?:const|let|var)?\s*(\w{1,10})\s*=\s*"([A-Za-z0-9+/=]{20,})"',
+                txt
+            )
+            return ( len(vars_found), len(txt), txt )
+        best = (-1, -1, "")
+        for b in candidates:
+            sc = score_blob(b)
+            if sc[:2] > best[:2]:
+                best = sc
+        if best[0] >= 2:
+            return best[2]
+        for b in re.findall(r'[\'"]([A-Za-z0-9+/=]{40,})[\'"]', html):
+            sc = score_blob(b)
+            if sc[0] >= 2:
+                return sc[2]
         return html
-    
+
     def _discover_vars(self, html: str) -> Tuple[Optional[str], Optional[str]]:
         pairs = re.findall(r'const\s+(\w+)\s*=\s*"([^"\n]+)"', html)
         candidates = [
