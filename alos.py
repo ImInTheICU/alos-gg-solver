@@ -5,9 +5,11 @@ Wraps requests.Session to auto solve PoW challenges for alos.gg,
 attaching captcha flags to responses and using a dynamic UA generator.
 
 If you have any problems please email me or open a Github issue. Thanks!
+
+NOTE: Xertz please stop making ChatGPT patch my bypasses, i can't keep up with thier speed...
 """
-__author__ = "Chris <christopher@ropanel.com>"
-__version__ = "0.0.9"
+__author__ = "Chris <contact@aris.wtf>"
+__version__ = "0.1.0"
 __github__ = "https://github.com/ImInTheICU/alos-gg-solver"
 
 import warnings
@@ -16,6 +18,7 @@ import random
 import hashlib
 import requests
 import base64
+import time
 
 from collections import defaultdict
 from typing import Optional, Dict, Tuple, Any
@@ -23,6 +26,7 @@ from typing import Optional, Dict, Tuple, Any
 class AlosResponse(requests.Response):
     captcha_present: bool
     captcha_solved: bool
+    captcha_solve_time: float
 
 class Alos:
     VERIFY_PATH: str = "/alosgg/verify"
@@ -123,64 +127,53 @@ class Alos:
         ma, mi, bu = random.randint(12, 14), random.randint(0, 5), random.randint(0, 1000)
         return f"Mozilla/5.0 ({android_token}) AppleWebKit/537.36 (KHTML, like Gecko) UCBrowser/{ma}.{mi}.{bu} Mobile Safari/537.36"
 
-    # NOTE: Xertz please stop patching my challenge bypasses, i can't keep making new regexs...
     def _extract_payload_with_challenge(self, html: str) -> str:
-        m_alias = re.search(r'var\s+(\w+)\s*=\s*window', html)
-        alias = m_alias.group(1) if m_alias else 'window'
-        invoke_re = re.compile(
-            rf'{re.escape(alias)}\s*'
-            r'\[\s*\w+\s*\]\s*'
-            r'\[\s*\w+\s*\]\s*'
-            r'\(\s*[\'"](?P<blob>[A-Za-z0-9+/=]{30,})[\'"]'
+        clean = re.sub(r"//.*", "", html)
+        clean = re.sub(r"/\*.*?\*/", "", clean, flags=re.S)
+        alias_match = re.search(r"var\s+(\w+)\s*=\s*window", clean)
+        alias = alias_match.group(1) if alias_match else "window"
+        for name, target in re.findall(r"var\s+(\w+)\s*=\s*(\w+)\s*;", clean):
+            if target == alias:
+                alias = name
+        invoke_pattern = (
+            rf"{re.escape(alias)}\s*"
+            r"\[\s*\w+\s*\]\s*"
+            r"\[\s*\w+\s*\]\s*"
+            r"\(\s*['\"](?P<blob>[A-Za-z0-9+/=]{30,})['\"]"
         )
-        blobs = [m.group('blob') for m in invoke_re.finditer(html)]
+        blobs = [m.group('blob') for m in re.finditer(invoke_pattern, clean)]
         if not blobs:
-            blobs = re.findall(r'[\'"]([A-Za-z0-9+/=]{40,})[\'"]', html)
-        freq: Dict[str,int] = {}
-        for b in blobs:
-            freq[b] = freq.get(b, 0) + 1
-        min_count = min(freq.values(), default=0)
-        candidates = [b for b, c in freq.items() if c == min_count]
-        if len(candidates) == 1:
+            blobs = re.findall(r"['\"]([A-Za-z0-9+/=]{30,})['\"]", clean)
+        best_payload = None
+        best_score = -1
+        for blob in set(blobs):
             try:
-                return base64.b64decode(candidates[0]).decode('utf-8', errors='ignore')
+                decoded = base64.b64decode(blob).decode('utf-8', errors='ignore')
             except Exception:
-                pass
-        def score_blob(blob_b64: str) -> Tuple[int,int,str]:
-            try:
-                txt = base64.b64decode(blob_b64).decode('utf-8', errors='ignore')
-            except Exception:
-                return ( -1, -1, "" )
-            vars_found = re.findall(
-                r'\b(?:const|let|var)?\s*(\w{1,10})\s*=\s*"([A-Za-z0-9+/=]{20,})"',
-                txt
+                continue
+            decoded_clean = re.sub(r"//.*", "", decoded)
+            decoded_clean = re.sub(r"/\*.*?\*/", "", decoded_clean, flags=re.S)
+            matches = re.findall(
+                r"const\s+\w+\s*=\s*['\"][A-Za-z0-9+/=]{20,}['\"]",
+                decoded_clean
             )
-            return ( len(vars_found), len(txt), txt )
-        best = (-1, -1, "")
-        for b in candidates:
-            sc = score_blob(b)
-            if sc[:2] > best[:2]:
-                best = sc
-        if best[0] >= 2:
-            return best[2]
-        for b in re.findall(r'[\'"]([A-Za-z0-9+/=]{40,})[\'"]', html):
-            sc = score_blob(b)
-            if sc[0] >= 2:
-                return sc[2]
-        return html
+            count = len(matches)
+            if count < 2:
+                continue
+            score = count * 10000 + len(decoded_clean)
+            if score > best_score:
+                best_score = score
+                best_payload = decoded_clean
+        return best_payload or html
 
     def _discover_vars(self, html: str) -> Tuple[Optional[str], Optional[str]]:
-        pairs = re.findall(r'const\s+(\w+)\s*=\s*"([^"\n]+)"', html)
-        candidates = [
-            (n, v) for n, v in pairs
-            if len(v) >= 20 and re.fullmatch(r'[A-Za-z0-9+/=]+', v)
-        ]
-        groups: Dict[int, list[str]] = defaultdict(list)
-        for name, val in candidates:
-            groups[len(val)].append(name)
-        for names in groups.values():
-            if len(names) >= 2:
-                return names[0], names[1]
+        pairs = re.findall(r"const\s+(\w+)\s*=\s*['\"]([A-Za-z0-9+/=]{20,})['\"]", html)
+        groups: Dict[int, list[Tuple[str,str]]] = defaultdict(list)
+        for name, val in pairs:
+            groups[len(val)].append((name, val))
+        for length, items in groups.items():
+            if len(items) == 2:
+                return items[0][0], items[1][0]
         return None, None
 
     def _solve_proof(self, challenge: str) -> int:
@@ -192,40 +185,29 @@ class Alos:
                 return nonce
             nonce += 1
 
-    def _solve_challenge(
-        self,
-        raw_html: str,
-        url: str,
-        proxies: Optional[Dict[str, str]],
-        headers: Dict[str, str]
-    ) -> Tuple[bool, bool]:
-        html = self._extract_payload_with_challenge(raw_html)
-        name1, name2 = self._discover_vars(html)
-        if not (name1 and name2):
+    def _solve_challenge(self, raw_html: str, url: str, proxies: Optional[Dict[str, str]], headers: Dict[str, str]) -> Tuple[bool, bool]:
+        payload = self._extract_payload_with_challenge(raw_html)
+        name1, name2 = self._discover_vars(payload)
+        if not name1 or not name2:
             return False, False
         if not self._cached_names:
             self._cached_names = (name1, name2)
         else:
             name1, name2 = self._cached_names
-        m1 = re.search(rf'{name1}\s*=\s*"([^"\n]+)"', html)
-        m2 = re.search(rf'{name2}\s*=\s*"([^"\n]+)"', html)
-        if not (m1 and m2):
+        m1 = re.search(rf"""{name1}\s*=\s*['\"]([^"\n]+)['\"]""", payload)
+        m2 = re.search(rf"""{name2}\s*=\s*['\"]([^"\n]+)['\"]""", payload)
+        if not m1 or not m2:
             return True, False
         r1 = self._solve_proof(m1.group(1))
         r2 = self._solve_proof(m2.group(1))
-        domain = re.match(r'^(https?://[^/]+)', url).group(1)
-        verify_headers = headers.copy()
-        verify_headers['Origin'] = domain
-        verify_url = f"{domain}{self.VERIFY_PATH}?r1={r1}&r2={r2}"
+        domain = re.match(r"^(https?://[^/]+)", url).group(1)
+        v_headers = headers.copy()
+        v_headers['Origin'] = domain
+        verify_url = f"{domain}{self.VERIFY_PATH}"
         try:
-            resp = self.session.get(
-                verify_url,
-                headers=verify_headers,
-                proxies=proxies,
-                timeout=self.timeout
-            )
+            resp = self.session.post(verify_url, headers={**v_headers, "Result1": str(r1), "Result2": str(r2)}, proxies=proxies, timeout=self.timeout)
             return True, resp.status_code == 200
-        except requests.RequestException:
+        except Exception:
             return True, False
 
     def request(
@@ -274,9 +256,12 @@ class Alos:
         raw: requests.Response = self.session.request(method, url, **kwargs)
         response = AlosResponse()
         response.__dict__.update(raw.__dict__)
+        start = time.perf_counter_ns()
         present, solved = self._solve_challenge(response.text, url, proxies, headers)
+        end = time.perf_counter_ns()
         response.captcha_present = present
         response.captcha_solved = solved
+        response.captcha_solve_time = end - start if present else 0.0
         if solved:
             retry = self.session.request(method, url, **kwargs)
             response.__dict__.update(retry.__dict__)
@@ -311,4 +296,3 @@ class Alos:
     def options(self, url, **kwargs) -> AlosResponse:
         """Alias for `request('OPTIONS', ...)`."""
         return self.request('OPTIONS', url, **kwargs)
-    
