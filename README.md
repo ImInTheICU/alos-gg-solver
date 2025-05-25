@@ -9,7 +9,7 @@
 * Built‑in, dynamic User-Agent generator covering Chrome, Firefox, Safari, Edge, Opera, Samsung Internet, Brave, and UC Browser across desktop and mobile platforms.
 * Automatic detection and solving of alos.gg PoW challenges.
 * Proxy support-once a PoW is solved, the IP (or proxy) is whitelisted for subsequent requests.
-* Typed responses via `AlosResponse`, -> `.captcha_present` and `.captcha_solved` attributes.
+* Typed responses via `AlosResponse`, -> `.captcha_present`, `.captcha_solved` and `.captcha_solve_time` attributes.
 
 ## Installation
 
@@ -21,7 +21,7 @@ Dependencies:
 
 * `requests==2.32.3`
 
-> All other modules (`hashlib`, `re`, `random`, `collections`, `typing`) are part of the Python standard library.
+> All other modules (`hashlib`, `re`, `random`, `collections`, `typing`, `time`) are part of the Python standard library.
 
 ## Usage
 
@@ -55,9 +55,7 @@ proxies = {
 alos = Alos(timeout=5.0)
 response = alos.get('https://alos.gg/', proxies=proxies)
 
-print(response.status_code)
-print(response.captcha_present)
-print(response.captcha_solved)
+print(f"\nStatus: {response.status_code} \nCaptcha Present: {response.captcha_present} \nSolved: {response.captcha_solved} \nSolve Time: {response.captcha_solve_time / 1e6:.3f} milliseconds \nHTML...: {response.text[:255]}")
 ```
 
 > **Note:** Once the PoW is solved, the proxy IP is whitelisted for a period of time. You can make further requests through the same proxy without re-solving the CAPTCHA until the whitelist expires.
@@ -75,6 +73,7 @@ See the source code for full details. Key methods:
 
 * `captcha_present: bool` whether a PoW challenge was detected in the response.
 * `captcha_solved: bool` whether the PoW was successfully solved (and the request retried).
+* `captcha_solve_time: float` the direct time 
 
 ## Reporting Issues
 
