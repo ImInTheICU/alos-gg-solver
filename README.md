@@ -33,10 +33,7 @@ from alos import Alos
 alos = Alos(timeout=5.0)
 response = alos.get('https://alos.gg/')
 
-print(response.status_code)            # HTTP status code
-print(response.captcha_present)       # True if PoW challenge was detected
-print(response.captcha_solved)        # True if challenge was solved and whitelisted
-print(response.text[:200])           # Page HTML
+print(f"\nStatus: {response.status_code} \nCaptcha Present: {response.captcha_present} \nSolved: {response.captcha_solved} \nSolve Time: {response.captcha_solve_time / 1e6:.3f} milliseconds \nHTML...: {response.text[:255]}")
 ```
 
 > **Note:** After the first successful request, your IP is whitelisted by alos.gg. Calls using the same `Alos` instance will skip the PoW challenge until the whitelist expires.
