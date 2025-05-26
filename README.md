@@ -1,3 +1,4 @@
+> NOTE: Currently patched won't be publicly updated anytime soon. For private queries reach out contact@aris.wtf Thanks :D
 ## Overview
 
 `alos-gg-solver` is a Python wrapper around `requests.Session` that automatically solves alos.gg Proof-of-Work (PoW) challenges using the `/alosgg/verify` endpoint. After solving the CAPTCHA, alos.gg will temporarily whitelist your IP (including any configured proxy), allowing requests to pass without repeated challenges for a period of time.
